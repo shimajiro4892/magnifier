@@ -37,7 +37,12 @@ ScreenCaptureKit で画面を直接キャプチャして最前面のオーバー
 ./scripts/build.sh              # Debug ビルド
 ./scripts/build.sh --release    # Release ビルド
 ./scripts/run.sh                # ビルドして起動（起動中のインスタンスは再起動）
+./scripts/install.sh            # Release をビルドして /Applications に配置して起動
 ```
+
+普段使いする場合は `install.sh` で `/Applications` に置いてください。
+`run.sh`（Debug ビルド）と `/Applications` の版を同時に起動すると、
+グローバルショートカットを奪い合うため片方の登録が失敗します。
 
 ## 初回セットアップ（画面収録の許可）
 
