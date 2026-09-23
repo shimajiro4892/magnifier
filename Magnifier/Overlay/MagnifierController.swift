@@ -29,6 +29,8 @@ final class MagnifierController: ObservableObject {
     private var displayLink: CADisplayLink?
 
     private var isForced = false
+    private var followsMouseButton = false
+    private var captureRequestID: UUID?
     private var skipCapture = false
     private var activeDisplay: DisplayGeometry?
     private var hasShownPermissionAlert = false
@@ -40,15 +42,12 @@ final class MagnifierController: ObservableObject {
 
     func start() {
         engine.onFrame = { [weak self] frame in
-            Task { @MainActor [weak self] in
-                self?.handle(frame: frame)
-            }
+            self?.handle(frame: frame)
         }
-        engine.onStreamStopped = { [weak self] error in
-            Task { @MainActor [weak self] in
-                Log.capture.error("capture stopped unexpectedly: \(error.localizedDescription, privacy: .public)")
-                self?.turnOff(reason: "capture stopped")
-            }
+        engine.onStreamStopped = { [weak self] requestID, error in
+            guard let self, self.captureRequestID == requestID else { return }
+            Log.capture.error("capture stopped unexpectedly: \(error.localizedDescription, privacy: .public)")
+            self.turnOff(reason: "capture stopped")
         }
 
         monitor.onPress = { [weak self] in self?.handleButtonPress() }
@@ -123,7 +122,7 @@ final class MagnifierController: ObservableObject {
         turnOff(reason: "shutdown")
         monitor.stop()
         hotKey.unregister()
-        Task { await engine.stop() }
+        engine.stop()
     }
 
     // MARK: - Global shortcut
@@ -167,12 +166,12 @@ final class MagnifierController: ObservableObject {
                 activate()
             }
         case .hold:
-            activate()
+            activate(followMouseButton: true)
         }
     }
 
     private func handleButtonRelease() {
-        guard settings.triggerMode == .hold else { return }
+        guard followsMouseButton else { return }
         turnOff(reason: "button release")
     }
 
@@ -184,8 +183,8 @@ final class MagnifierController: ObservableObject {
                 press detected by polling (pressedMouseButtons=\(NSEvent.pressedMouseButtons, privacy: .public), \
                 button=\(self.monitor.button.shortLabel, privacy: .public))
                 """)
-            activate()
-        } else if !pressed && isActive {
+            activate(followMouseButton: true)
+        } else if !pressed && isActive && followsMouseButton {
             turnOff(reason: "poll")
         }
     }
@@ -211,7 +210,7 @@ final class MagnifierController: ObservableObject {
         handleButtonPress()
     }
 
-    private func activate() {
+    private func activate(followMouseButton: Bool = false) {
         guard !isActive else { return }
         guard isForced || settings.isEnabled else {
             Log.overlay.info("activation skipped: disabled")
@@ -231,6 +230,7 @@ final class MagnifierController: ObservableObject {
             }
         }
 
+        followsMouseButton = followMouseButton && !isForced
         isActive = true
         activeDisplay = display
         Log.overlay.info("""
@@ -241,7 +241,7 @@ final class MagnifierController: ObservableObject {
             """)
         setupWindow(for: display)
         startDisplayLink()
-        if settings.triggerMode == .hold {
+        if followsMouseButton {
             startReleaseWatchdog()
         }
         updateLens()
@@ -255,6 +255,8 @@ final class MagnifierController: ObservableObject {
         guard isActive else { return }
         Log.overlay.info("deactivating (\(reason, privacy: .public))")
         isActive = false
+        followsMouseButton = false
+        captureRequestID = nil
         isForced = false
         skipCapture = false
         stopReleaseWatchdog()
@@ -262,7 +264,7 @@ final class MagnifierController: ObservableObject {
         renderer?.hide()
         window?.orderOut(nil)
         activeDisplay = nil
-        Task { await engine.stop() }
+        engine.stop()
     }
 
     private func restartCaptureIfActive() {
@@ -297,27 +299,35 @@ final class MagnifierController: ObservableObject {
     // MARK: - Capture
 
     private func startCapture(for display: DisplayGeometry) {
+        guard isActive, !skipCapture else { return }
+        let requestID = UUID()
+        captureRequestID = requestID
         engine.update(configuration: CaptureConfiguration(frameRate: settings.frameRate,
                                                           showsCursor: settings.showsCursor))
         let displayID = display.displayID
         let pixelSize = display.pixelSize
         Task { [weak self] in
+            guard let self, self.captureRequestID == requestID else { return }
             do {
-                try await self?.engine.start(displayID: displayID, pixelSize: pixelSize)
+                try await self.engine.start(displayID: displayID, pixelSize: pixelSize, requestID: requestID)
             } catch {
-                guard let self else { return }
-                Log.capture.error("capture start failed: \(error.localizedDescription, privacy: .public)")
-                self.permissions.refresh()
-                if !self.permissions.isScreenRecordingGranted {
-                    self.turnOff(reason: "permission")
-                    self.showPermissionAlertIfNeeded()
-                }
+                self.handleCaptureFailure(error, requestID: requestID)
             }
         }
     }
 
+    private func handleCaptureFailure(_ error: Error, requestID: UUID) {
+        guard captureRequestID == requestID else { return }
+        turnOff(reason: "capture start failed")
+        Log.capture.error("capture start failed: \(error.localizedDescription, privacy: .public)")
+        permissions.refresh()
+        if !permissions.isScreenRecordingGranted {
+            showPermissionAlertIfNeeded()
+        }
+    }
+
     private func handle(frame: ScreenCaptureEngine.FrameUpdate) {
-        guard isActive, let display = activeDisplay, frame.displayID == display.displayID else { return }
+        guard isActive, frame.requestID == captureRequestID, let display = activeDisplay, frame.displayID == display.displayID else { return }
         renderer?.setContents(frame.surface)
         updateLens()
     }
@@ -403,7 +413,7 @@ final class MagnifierController: ObservableObject {
         stopReleaseWatchdog()
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.isActive, !self.isForced, self.settings.triggerMode == .hold else { return }
+                guard let self, self.isActive, self.followsMouseButton else { return }
                 if !self.monitor.isButtonPressed {
                     Log.input.info("""
                         release detected by watchdog \
@@ -424,7 +434,7 @@ final class MagnifierController: ObservableObject {
 
     @objc private func displayLinkFired(_ link: CADisplayLink) {
         guard isActive else { return }
-        if settings.triggerMode == .hold, !isForced, !monitor.isButtonPressed {
+        if followsMouseButton, !monitor.isButtonPressed {
             turnOff(reason: "display link")
             return
         }

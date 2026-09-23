@@ -27,22 +27,25 @@ enum MagnifierError: LocalizedError {
 ///
 /// The frames are delivered as IOSurfaces that are handed straight to Core Animation,
 /// so the zooming itself is done by the GPU (`contentsRect` on a `CALayer`).
+@MainActor
 final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     struct FrameUpdate {
+        let requestID: UUID
         let displayID: CGDirectDisplayID
         let surface: IOSurface
         let pixelSize: CGSize
     }
 
-    /// Called on the capture queue for every delivered frame.
+    /// Called on the main actor for frames from the current stream only.
     var onFrame: ((FrameUpdate) -> Void)?
     /// Called on the main queue when the stream stops on its own (e.g. permission revoked).
-    var onStreamStopped: ((Error) -> Void)?
+    var onStreamStopped: ((UUID, Error) -> Void)?
 
     private let queue = DispatchQueue(label: "dev.local.Magnifier.capture", qos: .userInteractive)
     private var stream: SCStream?
     private var configuration = CaptureConfiguration()
     private var generation = 0
+    private var requestID: UUID?
 
     private(set) var runningDisplayID: CGDirectDisplayID?
 
@@ -50,10 +53,11 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
         self.configuration = configuration
     }
 
-    func start(displayID: CGDirectDisplayID, pixelSize: CGSize) async throws {
+    func start(displayID: CGDirectDisplayID, pixelSize: CGSize, requestID: UUID) async throws {
         generation += 1
         let myGeneration = generation
         await stopStream()
+        guard generation == myGeneration else { return }
 
         let content: SCShareableContent
         do {
@@ -63,6 +67,7 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             throw MagnifierError.screenCaptureUnavailable
         }
 
+        guard generation == myGeneration else { return }
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
             throw MagnifierError.displayNotFound(displayID)
         }
@@ -92,7 +97,19 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        try await stream.startCapture()
+        self.stream = stream
+        self.requestID = requestID
+        runningDisplayID = displayID
+        do {
+            try await stream.startCapture()
+        } catch {
+            if self.stream === stream {
+                self.stream = nil
+                self.requestID = nil
+                runningDisplayID = nil
+            }
+            throw error
+        }
 
         guard generation == myGeneration else {
             // A newer request came in while we were starting up.
@@ -100,8 +117,6 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             return
         }
 
-        self.stream = stream
-        runningDisplayID = displayID
         Log.capture.info("""
             started display=\(displayID, privacy: .public) size=\(width, privacy: .public)x\(height, privacy: .public) \
             contentRect=\(String(describing: filter.contentRect), privacy: .public) \
@@ -109,12 +124,19 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             """)
     }
 
-    func stop() async {
+    func stop() {
         generation += 1
-        await stopStream()
+        let oldStream = stream
+        stream = nil
+        requestID = nil
+        runningDisplayID = nil
+        Task {
+            try? await oldStream?.stopCapture()
+        }
     }
 
     private func stopStream() async {
+        requestID = nil
         runningDisplayID = nil
         guard let stream else { return }
         self.stream = nil
@@ -128,8 +150,8 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
 
     // MARK: - SCStreamOutput
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, let displayID = runningDisplayID else { return }
+    nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen else { return }
         guard sampleBuffer.isValid else { return }
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let statusValue = attachments.first?[.status] as? Int,
@@ -150,19 +172,24 @@ final class ScreenCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
             return
         }
         let size = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
-        onFrame?(FrameUpdate(displayID: displayID, surface: surface, pixelSize: size))
+        Task { @MainActor [weak self] in
+            guard let self, self.stream === stream,
+                  let displayID = self.runningDisplayID, let requestID = self.requestID else { return }
+            self.onFrame?(FrameUpdate(requestID: requestID, displayID: displayID, surface: surface, pixelSize: size))
+        }
     }
 
     // MARK: - SCStreamDelegate
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        Log.capture.error("stream stopped: \(error.localizedDescription, privacy: .public)")
-        if self.stream === stream {
+    nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        Task { @MainActor [weak self] in
+            guard let self, self.stream === stream, let requestID = self.requestID else { return }
+            Log.capture.error("stream stopped: \(error.localizedDescription, privacy: .public)")
+            self.generation += 1
             self.stream = nil
-            runningDisplayID = nil
-        }
-        DispatchQueue.main.async { [weak self] in
-            self?.onStreamStopped?(error)
+            self.requestID = nil
+            self.runningDisplayID = nil
+            self.onStreamStopped?(requestID, error)
         }
     }
 }

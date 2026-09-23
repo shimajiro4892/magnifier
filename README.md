@@ -146,6 +146,7 @@ open -n build/Build/Products/Debug/Magnifier.app --args --open-settings
 
 ```sh
 swift Tools/verify-crop-math.swift
+bash scripts/test-lifecycle.sh
 ```
 
 4 象限に色分けしたテスト画像を使い、以下を検証します。
@@ -155,6 +156,11 @@ swift Tools/verify-crop-math.swift
 - カーソル位置に応じた切り出しが正しいこと（画面端のクランプを含む）
 - `CALayer.render(in:)` と AppKit の `cacheDisplay` の 2 経路で一致すること
 - ScreenCaptureKit が渡すのと同じ **IOSurface を contents にした場合**も正しいこと
+
+`test-lifecycle.sh` は、ホールドモード中のショートカット表示、マウスを離したときの解除、
+キャプチャ開始失敗時の後始末、古いストリームから遅れて届く停止通知を検証します。
+ログイン済みのデスクトップで実行してください。一時的にレンズ枠を表示しますが、
+画面収録や設定の保存は行いません。
 
 ## 開発メモ
 
