@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !PermissionMonitor.shared.isScreenRecordingGranted {
             PermissionMonitor.shared.requestScreenRecordingAccess()
         }
+        Log.app.info("screen recording granted=\(PermissionMonitor.shared.isScreenRecordingGranted, privacy: .public)")
 
         let arguments = CommandLine.arguments
         Log.app.info("launch arguments: \(arguments.joined(separator: " "), privacy: .public)")
@@ -20,6 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if arguments.contains("--activate") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 MagnifierController.shared.activateForTesting(duration: 8)
+            }
+        }
+        if arguments.contains("--overlay-test") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                MagnifierController.shared.activateForTesting(duration: 20, capture: false)
             }
         }
     }

@@ -54,10 +54,17 @@ ScreenCaptureKit で画面を直接キャプチャして最前面のオーバー
 3. ボタンを離すとレンズが消えます
 4. 終了はメニューバーのアイコン →「終了」
 
-動作確認用に、ボタンを押さずに 8 秒間だけ強制表示する起動オプションもあります。
+動作確認用の起動オプションもあります（開発用）。
 
 ```sh
+# ボタンを押さずに 8 秒間だけ拡大鏡を表示（画面収録を使用）
 open -n build/Build/Products/Debug/Magnifier.app --args --activate
+
+# キャプチャなしでレンズ枠だけを 20 秒間表示（許可不要の見た目確認）
+open -n build/Build/Products/Debug/Magnifier.app --args --overlay-test
+
+# 設定画面を開いた状態で起動
+open -n build/Build/Products/Debug/Magnifier.app --args --open-settings
 ```
 
 ## 設定項目

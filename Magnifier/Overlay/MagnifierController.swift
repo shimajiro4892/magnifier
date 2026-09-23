@@ -23,6 +23,7 @@ final class MagnifierController {
 
     private var isActive = false
     private var isForced = false
+    private var skipCapture = false
     private var activeDisplay: DisplayGeometry?
     private var hasShownPermissionAlert = false
     private var pollTimer: Timer?
@@ -108,7 +109,10 @@ final class MagnifierController {
         guard !isForced else { return }
         let pressed = monitor.isButtonPressed
         if pressed && !isActive {
-            Log.input.info("press detected by polling")
+            Log.input.info("""
+                press detected by polling (pressedMouseButtons=\(NSEvent.pressedMouseButtons, privacy: .public), \
+                button=\(self.monitor.button.shortLabel, privacy: .public))
+                """)
             activate()
         } else if !pressed && isActive {
             deactivate()
@@ -124,8 +128,10 @@ final class MagnifierController {
     // MARK: - Activation
 
     /// Test / CLI entry point: shows the magnifier for a while without a button press.
-    func activateForTesting(duration: TimeInterval) {
+    /// With `capture: false` only the lens frame is drawn (no screen recording permission needed).
+    func activateForTesting(duration: TimeInterval, capture: Bool = true) {
         isForced = true
+        skipCapture = !capture
         activate()
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
             guard let self else { return }
@@ -145,26 +151,36 @@ final class MagnifierController {
             return
         }
 
-        permissions.refresh()
-        guard permissions.isScreenRecordingGranted else {
-            Log.app.error("activation blocked: screen recording not granted")
-            showPermissionAlertIfNeeded()
-            return
+        if !skipCapture {
+            permissions.refresh()
+            guard permissions.isScreenRecordingGranted else {
+                Log.app.error("activation blocked: screen recording not granted")
+                showPermissionAlertIfNeeded()
+                return
+            }
         }
 
         isActive = true
         activeDisplay = display
+        Log.overlay.info("""
+            activated display=\(display.displayID, privacy: .public) \
+            frame=\(String(describing: display.frame), privacy: .public) \
+            pixels=\(Int(display.pixelSize.width), privacy: .public)x\(Int(display.pixelSize.height), privacy: .public) \
+            scale=\(display.scaleFactor, privacy: .public) capture=\(!self.skipCapture, privacy: .public)
+            """)
         setupWindow(for: display)
         startDisplayLink()
         updateLens()
-        startCapture(for: display)
-        Log.overlay.info("activated display=\(display.displayID, privacy: .public)")
+        if !skipCapture {
+            startCapture(for: display)
+        }
     }
 
     private func deactivate() {
         guard isActive else { return }
         isActive = false
         isForced = false
+        skipCapture = false
         stopDisplayLink()
         renderer?.hide()
         window?.orderOut(nil)
