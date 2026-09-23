@@ -23,8 +23,8 @@ struct MenuBarContent: View {
 
         Divider()
 
-        SettingsLink {
-            Text("設定…")
+        Button("設定…") {
+            AppCommands.openSettings()
         }
         .keyboardShortcut(",", modifiers: .command)
 

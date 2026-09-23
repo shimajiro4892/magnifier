@@ -14,9 +14,5 @@ struct MagnifierApp: App {
             Image(systemName: settings.isEnabled ? "magnifyingglass" : "magnifyingglass.circle")
         }
         .menuBarExtraStyle(.menu)
-
-        Settings {
-            SettingsView(settings: settings, permissions: permissions)
-        }
     }
 }

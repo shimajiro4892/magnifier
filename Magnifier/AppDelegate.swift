@@ -15,17 +15,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.app.info("launch arguments: \(arguments.joined(separator: " "), privacy: .public)")
         if arguments.contains("--open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                AppCommands.openSettings()
+                Task { @MainActor in
+                    AppCommands.openSettings()
+                }
             }
         }
         if arguments.contains("--activate") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                MagnifierController.shared.activateForTesting(duration: 8)
+                Task { @MainActor in
+                    MagnifierController.shared.activateForTesting(duration: 8)
+                }
             }
         }
         if arguments.contains("--overlay-test") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                MagnifierController.shared.activateForTesting(duration: 20, capture: false)
+                Task { @MainActor in
+                    MagnifierController.shared.activateForTesting(duration: 20, capture: false)
+                }
             }
         }
     }
@@ -40,12 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum AppCommands {
-    /// Opens the SwiftUI settings window from an agent (menu bar only) app.
+    /// Opens the settings window from an agent (menu bar only) app.
+    @MainActor
     static func openSettings() {
-        NSApp.activate()
-        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-            return
-        }
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        SettingsWindowController.shared.show()
     }
 }
