@@ -14,11 +14,14 @@ final class MagnifierController: ObservableObject {
 
     /// Whether the magnifier is currently shown.
     @Published private(set) var isActive = false
+    /// Set when the global shortcut could not be registered.
+    @Published private(set) var hotKeyError: String?
 
     private let settings = SettingsStore.shared
     private let permissions = PermissionMonitor.shared
     private let monitor = MouseButtonMonitor()
     private let engine = ScreenCaptureEngine()
+    private let hotKey = GlobalHotKey()
 
     private var window: OverlayWindow?
     private var hostView: OverlayHostView?
@@ -91,6 +94,16 @@ final class MagnifierController: ObservableObject {
             }
         }
 
+        settings.$hotKey
+            .dropFirst()
+            .sink { [weak self] shortcut in
+                Task { @MainActor in
+                    self?.updateHotKey(shortcut)
+                }
+            }
+            .store(in: &cancellables)
+        updateHotKey(settings.hotKey)
+
         permissions.startMonitoring()
 
         // Safety net in case a global monitor does not deliver the press
@@ -109,7 +122,38 @@ final class MagnifierController: ObservableObject {
     func shutdown() {
         turnOff(reason: "shutdown")
         monitor.stop()
+        hotKey.unregister()
         Task { await engine.stop() }
+    }
+
+    // MARK: - Global shortcut
+
+    private func updateHotKey(_ shortcut: KeyShortcut) {
+        hotKeyError = nil
+        hotKey.unregister()
+        guard shortcut.isSet else {
+            Log.input.info("hot key cleared")
+            return
+        }
+        let registered = hotKey.register(keyCode: UInt32(shortcut.keyCode),
+                                         modifiers: shortcut.carbonModifiers) { [weak self] in
+            Task { @MainActor in
+                self?.toggleFromHotKey()
+            }
+        }
+        if !registered {
+            hotKeyError = "\(shortcut.display) を登録できませんでした。他のアプリが同じキーを使っている可能性があります。"
+        }
+    }
+
+    /// The shortcut always toggles, independent of the mouse button mode.
+    private func toggleFromHotKey() {
+        Log.input.info("hot key pressed")
+        if isActive {
+            turnOff(reason: "hot key")
+        } else {
+            activate()
+        }
     }
 
     // MARK: - Button handling

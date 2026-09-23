@@ -91,7 +91,13 @@ final class SettingsStore: ObservableObject {
     @Published var clampToScreen: Bool { didSet { persist(clampToScreen, .clampToScreen) } }
     @Published var offsetX: Double { didSet { persist(offsetX, .offsetX) } }
     @Published var offsetY: Double { didSet { persist(offsetY, .offsetY) } }
+    @Published var hotKey: KeyShortcut { didSet { persistHotKey() } }
     @Published var frameRate: Int { didSet { persist(frameRate, .frameRate) } }
+
+    /// Default shortcut: ⌃⌥M.
+    static let defaultHotKey = KeyShortcut(keyCode: 46,
+                                           modifiers: Int(NSEvent.ModifierFlags([.control, .option]).rawValue),
+                                           display: "⌃⌥M")
 
     /// Size of the lens on screen, in points.
     var lensSize: CGSize {
@@ -101,6 +107,7 @@ final class SettingsStore: ObservableObject {
     private enum Key: String {
         case isEnabled, mouseButton, triggerMode, regionWidth, regionHeight, zoom, shape
         case showsCursor, smoothScaling, showBorder, clampToScreen, offsetX, offsetY, frameRate
+        case hotKey
     }
 
     private let defaults = UserDefaults.standard
@@ -121,6 +128,17 @@ final class SettingsStore: ObservableObject {
         offsetX = store.object(forKey: Key.offsetX.rawValue) as? Double ?? 0
         offsetY = store.object(forKey: Key.offsetY.rawValue) as? Double ?? 0
         frameRate = store.object(forKey: Key.frameRate.rawValue) as? Int ?? 60
+        hotKey = Self.loadHotKey(store) ?? Self.defaultHotKey
+    }
+
+    private static func loadHotKey(_ store: UserDefaults) -> KeyShortcut? {
+        guard let data = store.data(forKey: Key.hotKey.rawValue) else { return nil }
+        return try? JSONDecoder().decode(KeyShortcut.self, from: data)
+    }
+
+    private func persistHotKey() {
+        guard let data = try? JSONEncoder().encode(hotKey) else { return }
+        defaults.set(data, forKey: Key.hotKey.rawValue)
     }
 
     private static func enumValue<T: RawRepresentable>(_ store: UserDefaults, _ key: Key, default defaultValue: T) -> T where T.RawValue == Int {

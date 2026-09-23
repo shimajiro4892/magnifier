@@ -19,6 +19,7 @@ struct MenuBarContent: View {
 
         Text("起動ボタン: \(settings.mouseButton.label)")
         Text("動作モード: \(settings.triggerMode.shortLabel)")
+        Text("ショートカット: \(settings.hotKey.isSet ? settings.hotKey.display : "未設定")")
         Text("拡大範囲: \(Int(settings.regionWidth))×\(Int(settings.regionHeight)) pt / \(settings.zoom, specifier: "%.1f")倍")
         Text("レンズ: \(Int(settings.lensSize.width))×\(Int(settings.lensSize.height)) pt")
 

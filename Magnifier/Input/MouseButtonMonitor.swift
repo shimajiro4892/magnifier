@@ -74,7 +74,11 @@ final class MouseButtonMonitor {
 
     private func handle(type: NSEvent.EventType, buttonNumber: Int) {
         guard matches(type: type, buttonNumber: buttonNumber) else { return }
-        Log.input.debug("button event type=\(type.rawValue, privacy: .public) number=\(buttonNumber, privacy: .public)")
+        Log.input.info("""
+            button event type=\(type.rawValue, privacy: .public) \
+            number=\(buttonNumber, privacy: .public) \
+            pressedMouseButtons=\(NSEvent.pressedMouseButtons, privacy: .public)
+            """)
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             eventPressed = true

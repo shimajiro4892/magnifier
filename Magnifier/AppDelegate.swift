@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -13,6 +14,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let arguments = CommandLine.arguments
         Log.app.info("launch arguments: \(arguments.joined(separator: " "), privacy: .public)")
+        if arguments.contains("--register-login-item") {
+            LaunchAtLogin.shared.setEnabled(true)
+            Log.app.info("login item status=\(String(describing: SMAppService.mainApp.status), privacy: .public)")
+        }
+        if arguments.contains("--unregister-login-item") {
+            LaunchAtLogin.shared.setEnabled(false)
+            Log.app.info("login item status=\(String(describing: SMAppService.mainApp.status), privacy: .public)")
+        }
         if arguments.contains("--toggle-test") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 Task { @MainActor in

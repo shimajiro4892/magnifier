@@ -16,7 +16,10 @@ final class SettingsWindowController {
 
     func show() {
         if window == nil {
-            let hosting = NSHostingController(rootView: SettingsView(settings: .shared, permissions: .shared))
+            let hosting = NSHostingController(rootView: SettingsView(settings: .shared,
+                                                                     permissions: .shared,
+                                                                     controller: .shared,
+                                                                     launchAtLogin: .shared))
             let window = NSWindow(contentViewController: hosting)
             window.title = "拡大鏡の設定"
             window.styleMask = [.titled, .closable, .miniaturizable]

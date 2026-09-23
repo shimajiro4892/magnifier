@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var permissions: PermissionMonitor
+    @ObservedObject var controller: MagnifierController
+    @ObservedObject var launchAtLogin: LaunchAtLogin
 
     var body: some View {
         Form {
@@ -27,6 +29,10 @@ struct SettingsView: View {
                 Text("トグル: ボタンを押すたびに表示 / 非表示を切り替えます。押している間: ボタンを押している間だけ表示します。どちらもクリックは背面のアプリにそのまま届きます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("ショートカット") {
+                ShortcutRecorder(settings: settings, registrationError: controller.hotKeyError)
             }
 
             Section("拡大する範囲") {
@@ -67,9 +73,33 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("一般") {
+                Toggle("ログイン時に起動", isOn: Binding(
+                    get: { launchAtLogin.isEnabled },
+                    set: { launchAtLogin.setEnabled($0) }
+                ))
+                if launchAtLogin.requiresApproval {
+                    HStack {
+                        Text("システム設定での許可が必要です")
+                            .foregroundStyle(.secondary)
+                        Button("ログイン項目を開く") {
+                            launchAtLogin.openLoginItemsSettings()
+                        }
+                    }
+                }
+                if let error = launchAtLogin.lastError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Text("アプリを /Applications に移動してから有効にすると、ログイン時に確実に起動します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 600)
+        .frame(width: 480, height: 700)
         .navigationTitle("拡大鏡の設定")
     }
 }
