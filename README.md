@@ -198,7 +198,8 @@ swift Tools/make-app-icon.swift    # Assets.xcassets を再生成（プレビュ
   ```
 
 - Xcode の GUI からビルドする場合は、プロジェクトの Signing & Capabilities で
-  自分のチームを選び直してください（プロジェクトには開発機の証明書ハッシュを設定してあります）。
+  自分のチーム（Apple Development 証明書）を選んでください。
+  `scripts/build.sh` を使う場合は自動で検出されるため設定不要です。
 
 ## 既知の制約
 
