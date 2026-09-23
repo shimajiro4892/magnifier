@@ -13,6 +13,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let arguments = CommandLine.arguments
         Log.app.info("launch arguments: \(arguments.joined(separator: " "), privacy: .public)")
+        if arguments.contains("--toggle-test") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                Task { @MainActor in
+                    MagnifierController.shared.simulateButtonPress()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+                    Task { @MainActor in
+                        MagnifierController.shared.simulateButtonPress()
+                    }
+                }
+            }
+        }
         if arguments.contains("--open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 Task { @MainActor in

@@ -5,11 +5,15 @@ import QuartzCore
 
 /// Wires the mouse button, the screen capture and the overlay window together.
 ///
-/// While the configured mouse button is held down the display under the cursor is
-/// captured and a lens centered on the cursor shows the area around it magnified.
+/// The magnifier can either follow the mouse button (hold) or be toggled on and
+/// off by it. While it is on, the display under the cursor is captured and a
+/// lens centered on the cursor shows the area around it magnified.
 @MainActor
-final class MagnifierController {
+final class MagnifierController: ObservableObject {
     static let shared = MagnifierController()
+
+    /// Whether the magnifier is currently shown.
+    @Published private(set) var isActive = false
 
     private let settings = SettingsStore.shared
     private let permissions = PermissionMonitor.shared
@@ -21,12 +25,12 @@ final class MagnifierController {
     private var renderer: LensRenderer?
     private var displayLink: CADisplayLink?
 
-    private var isActive = false
     private var isForced = false
     private var skipCapture = false
     private var activeDisplay: DisplayGeometry?
     private var hasShownPermissionAlert = false
     private var pollTimer: Timer?
+    private var releaseWatchdog: Timer?
     private var cancellables: Set<AnyCancellable> = []
 
     private init() {}
@@ -40,15 +44,12 @@ final class MagnifierController {
         engine.onStreamStopped = { [weak self] error in
             Task { @MainActor [weak self] in
                 Log.capture.error("capture stopped unexpectedly: \(error.localizedDescription, privacy: .public)")
-                self?.deactivate()
+                self?.turnOff(reason: "capture stopped")
             }
         }
 
-        monitor.onPress = { [weak self] in self?.activate() }
-        monitor.onRelease = { [weak self] in
-            guard let self, !self.isForced else { return }
-            self.deactivate()
-        }
+        monitor.onPress = { [weak self] in self?.handleButtonPress() }
+        monitor.onRelease = { [weak self] in self?.handleButtonRelease() }
         monitor.start(button: settings.mouseButton)
 
         settings.$mouseButton
@@ -56,7 +57,7 @@ final class MagnifierController {
             .sink { [weak self] button in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.deactivate()
+                    self.turnOff(reason: "button changed")
                     self.monitor.start(button: button)
                 }
             }
@@ -67,7 +68,7 @@ final class MagnifierController {
             .sink { [weak self] enabled in
                 Task { @MainActor in
                     guard let self, !enabled else { return }
-                    self.deactivate()
+                    self.turnOff(reason: "disabled")
                 }
             }
             .store(in: &cancellables)
@@ -102,11 +103,37 @@ final class MagnifierController {
         RunLoop.main.add(pollTimer, forMode: .common)
         self.pollTimer = pollTimer
 
-        Log.app.info("controller started")
+        Log.app.info("controller started mode=\(self.settings.triggerMode.label, privacy: .public)")
+    }
+
+    func shutdown() {
+        turnOff(reason: "shutdown")
+        monitor.stop()
+        Task { await engine.stop() }
+    }
+
+    // MARK: - Button handling
+
+    private func handleButtonPress() {
+        switch settings.triggerMode {
+        case .toggle:
+            if isActive {
+                turnOff(reason: "toggle off")
+            } else {
+                activate()
+            }
+        case .hold:
+            activate()
+        }
+    }
+
+    private func handleButtonRelease() {
+        guard settings.triggerMode == .hold else { return }
+        turnOff(reason: "button release")
     }
 
     private func pollButtonState() {
-        guard !isForced else { return }
+        guard !isForced, settings.triggerMode == .hold else { return }
         let pressed = monitor.isButtonPressed
         if pressed && !isActive {
             Log.input.info("""
@@ -115,14 +142,8 @@ final class MagnifierController {
                 """)
             activate()
         } else if !pressed && isActive {
-            deactivate()
+            turnOff(reason: "poll")
         }
-    }
-
-    func shutdown() {
-        deactivate()
-        monitor.stop()
-        Task { await engine.stop() }
     }
 
     // MARK: - Activation
@@ -134,10 +155,16 @@ final class MagnifierController {
         skipCapture = !capture
         activate()
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-            guard let self else { return }
-            self.isForced = false
-            self.deactivate()
+            Task { @MainActor in
+                self?.turnOff(reason: "test finished")
+            }
         }
+    }
+
+    /// Test hook: behaves exactly like a physical button press.
+    func simulateButtonPress() {
+        Log.input.info("simulated button press (mode=\(self.settings.triggerMode.shortLabel, privacy: .public))")
+        handleButtonPress()
     }
 
     private func activate() {
@@ -170,23 +197,28 @@ final class MagnifierController {
             """)
         setupWindow(for: display)
         startDisplayLink()
+        if settings.triggerMode == .hold {
+            startReleaseWatchdog()
+        }
         updateLens()
         if !skipCapture {
             startCapture(for: display)
         }
     }
 
-    private func deactivate() {
+    /// Hides the magnifier. `reason` is only used for logging.
+    func turnOff(reason: String) {
         guard isActive else { return }
+        Log.overlay.info("deactivating (\(reason, privacy: .public))")
         isActive = false
         isForced = false
         skipCapture = false
+        stopReleaseWatchdog()
         stopDisplayLink()
         renderer?.hide()
         window?.orderOut(nil)
         activeDisplay = nil
         Task { await engine.stop() }
-        Log.overlay.info("deactivated")
     }
 
     private func restartCaptureIfActive() {
@@ -233,7 +265,7 @@ final class MagnifierController {
                 Log.capture.error("capture start failed: \(error.localizedDescription, privacy: .public)")
                 self.permissions.refresh()
                 if !self.permissions.isScreenRecordingGranted {
-                    self.deactivate()
+                    self.turnOff(reason: "permission")
                     self.showPermissionAlertIfNeeded()
                 }
             }
@@ -266,7 +298,7 @@ final class MagnifierController {
         let settings = self.settings
         let lensSize = settings.lensSize
 
-        // Cursor position in normalized image coordinates (origin: top-left of the captured display).
+        // Cursor position in normalized display coordinates (origin: top-left).
         let normalizedX = cursor.x / viewSize.width
         let normalizedY = 1 - cursor.y / viewSize.height
 
@@ -305,7 +337,7 @@ final class MagnifierController {
                          scale: scale)
     }
 
-    // MARK: - Display link
+    // MARK: - Timers
 
     private func startDisplayLink() {
         stopDisplayLink()
@@ -320,11 +352,36 @@ final class MagnifierController {
         displayLink = nil
     }
 
+    /// A plain timer that keeps checking the button state. Unlike a `CADisplayLink`
+    /// it also runs when the window is not visible or the display sleeps, so a
+    /// missed mouse up event cannot leave the magnifier on screen.
+    private func startReleaseWatchdog() {
+        stopReleaseWatchdog()
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isActive, !self.isForced, self.settings.triggerMode == .hold else { return }
+                if !self.monitor.isButtonPressed {
+                    Log.input.info("""
+                        release detected by watchdog \
+                        (pressedMouseButtons=\(NSEvent.pressedMouseButtons, privacy: .public))
+                        """)
+                    self.turnOff(reason: "watchdog")
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        releaseWatchdog = timer
+    }
+
+    private func stopReleaseWatchdog() {
+        releaseWatchdog?.invalidate()
+        releaseWatchdog = nil
+    }
+
     @objc private func displayLinkFired(_ link: CADisplayLink) {
         guard isActive else { return }
-        if !isForced && !monitor.isButtonPressed {
-            // Safety net in case a mouse up event was missed.
-            deactivate()
+        if settings.triggerMode == .hold, !isForced, !monitor.isButtonPressed {
+            turnOff(reason: "display link")
             return
         }
         updateLens()
@@ -347,7 +404,7 @@ final class MagnifierController {
     private func screenParametersDidChange() {
         guard isActive else { return }
         guard let display = DisplayGeometry.containing(NSEvent.mouseLocation) else {
-            deactivate()
+            turnOff(reason: "display removed")
             return
         }
         activeDisplay = display

@@ -52,12 +52,35 @@ enum LensShape: Int, CaseIterable, Identifiable {
     }
 }
 
+/// How the mouse button controls the magnifier.
+enum TriggerMode: Int, CaseIterable, Identifiable {
+    case toggle = 0
+    case hold = 1
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .toggle: return "押すたびに On / Off（トグル）"
+        case .hold: return "押している間だけ表示"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .toggle: return "トグル"
+        case .hold: return "押している間"
+        }
+    }
+}
+
 /// User defaults backed settings shared by the UI and the magnifier engine.
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
 
     @Published var isEnabled: Bool { didSet { persist(isEnabled, .isEnabled) } }
     @Published var mouseButton: MouseButtonChoice { didSet { persist(mouseButton.rawValue, .mouseButton) } }
+    @Published var triggerMode: TriggerMode { didSet { persist(triggerMode.rawValue, .triggerMode) } }
     @Published var regionWidth: Double { didSet { persist(regionWidth, .regionWidth) } }
     @Published var regionHeight: Double { didSet { persist(regionHeight, .regionHeight) } }
     @Published var zoom: Double { didSet { persist(zoom, .zoom) } }
@@ -76,7 +99,7 @@ final class SettingsStore: ObservableObject {
     }
 
     private enum Key: String {
-        case isEnabled, mouseButton, regionWidth, regionHeight, zoom, shape
+        case isEnabled, mouseButton, triggerMode, regionWidth, regionHeight, zoom, shape
         case showsCursor, smoothScaling, showBorder, clampToScreen, offsetX, offsetY, frameRate
     }
 
@@ -86,6 +109,7 @@ final class SettingsStore: ObservableObject {
         let store = UserDefaults.standard
         isEnabled = store.object(forKey: Key.isEnabled.rawValue) as? Bool ?? true
         mouseButton = Self.enumValue(store, .mouseButton, default: .middle)
+        triggerMode = Self.enumValue(store, .triggerMode, default: .toggle)
         regionWidth = store.object(forKey: Key.regionWidth.rawValue) as? Double ?? 180
         regionHeight = store.object(forKey: Key.regionHeight.rawValue) as? Double ?? 120
         zoom = store.object(forKey: Key.zoom.rawValue) as? Double ?? 2.5

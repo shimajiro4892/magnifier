@@ -19,7 +19,12 @@ struct SettingsView: View {
                         Text(choice.label).tag(choice)
                     }
                 }
-                Text("このボタンを押している間だけ、カーソルの周囲が拡大表示されます。クリック自体は通常どおり背面のアプリに届きます。")
+                Picker("動作モード", selection: $settings.triggerMode) {
+                    ForEach(TriggerMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                Text("トグル: ボタンを押すたびに表示 / 非表示を切り替えます。押している間: ボタンを押している間だけ表示します。どちらもクリックは背面のアプリにそのまま届きます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
